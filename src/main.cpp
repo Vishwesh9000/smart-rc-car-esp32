@@ -1,5 +1,5 @@
 #include "Arduino.h"
-#include "Logging.h"
+#include "Logger.h"
 #include "Timer.h"
 #include "DRV8833_Driver.h"
 #include <string_view>
@@ -11,7 +11,7 @@
 //Log Tags
 constexpr std::string_view MAIN = "MAIN", MOTOR1 = "MOTOR1", MOTOR2 = "MOTOR2";
 
-static Logging& logger = Logging::instance();
+static Logger& logger = Logger::instance();
 DRV8833_DCMotor motor1(M1_F, M1_B, MOTOR1, LogLevel::VERBOSE), motor2(M2_F, M2_B, MOTOR2, LogLevel::VERBOSE);
 
 void setup() {

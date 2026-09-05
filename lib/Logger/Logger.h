@@ -1,10 +1,11 @@
-//Logging.h
+//Logger.h
 #pragma once
 #include <map>
 #include <string>
 #include <string_view>
 #include <stdarg.h>
 #include <type_traits>
+#include <algorithm>
 
 #define ANSI_CODES //Comment out if monitor doesn't support the codes
 
@@ -80,29 +81,45 @@ constexpr bool operator!=(int i, MemFlag f) {
     return !(f==i);
 }
 
-class Logging {
+class Logger {
     private:
-    const std::string_view LOGGER = "LOGGER";
-    LogLevel globalLogLevel = LogLevel::INFO;
-    std::map<std::string, LogLevel, std::less<>> tagLevels = {{std::string(LOGGER), LogLevel::INFO}};
-    static constexpr size_t logBufferSize=64;
-
-    Logging(const Logging&) = delete;
-    Logging(Logging&&) = delete;
-    Logging& operator=(const Logging&) = delete;
-    Logging& operator=(Logging&&) = delete;
-
-    bool shouldLog(std::string_view tag, LogLevel level);
-    void log(std::string_view tag, LogLevel level, const char* msg, va_list args);
-
+    static constexpr std::string_view _tag = "LOGGER";
+    LogLevel globalLogLevel = LogLevel::VERBOSE;
+    std::map<std::string, LogLevel, std::less<>> tagLevels = {{std::string(_tag), LogLevel::VERBOSE}};
+    static constexpr size_t logBufferSize=96, tagSize=16;
+    
     public:
-    Logging();
-    static Logging& instance();
+    struct LogMessage {
+        uint32_t timestamp;
+        char tag[tagSize];
+        char msg[logBufferSize];
+        LogLevel level;
+        std::optional<double> value;
+    };
+    static Logger& instance();
     void addTag(std::string_view tag, LogLevel level = LogLevel::_DEFAULT);
     void setLevel(LogLevel level, std::string_view tag = std::string_view{});
     void log(std::string_view tag, LogLevel level, const char* msg, ...);
+    void logFromISR(LogMessage message);
     void logMem(std::string_view tag, LogLevel level, MemFlag flags, const char* msg, ...);
     constexpr char toChar(LogLevel level);
+
+    private:
+    TaskHandle_t task;
+    QueueHandle_t queue;
+    UBaseType_t maxQueueMessages = 10, priority = 5;
+    size_t stackSize = 4096;
+
+    Logger();
+    Logger(const Logger&) = delete;
+    Logger(Logger&&) = delete;
+    Logger& operator=(const Logger&) = delete;
+    Logger& operator=(Logger&&) = delete;
+
+    bool shouldLog(std::string_view tag, LogLevel level);
+    void logTask();
+    static void taskFunction(void *logObj);
+    void snprintfErrorLogger(int written, size_t bufferSize, LogLevel level, const char *failedError, const char *overflowError);
 };
 
 

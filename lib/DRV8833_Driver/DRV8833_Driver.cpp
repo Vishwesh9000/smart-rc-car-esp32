@@ -1,7 +1,7 @@
 #include "DRV8833_Driver.h"
 
 
-static Logging& logger = Logging::instance();
+static Logger& logger = Logger::instance();
 
 DRV8833_DCMotor::DRV8833_DCMotor(int f, int b, std::string_view motorID, LogLevel level): F_PIN(f), B_PIN(b), targetPower(0), power(0), direction(0), tag(motorID.empty() ? "MOTOR" : motorID), initLogLevel(level) {}
 

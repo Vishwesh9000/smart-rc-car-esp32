@@ -1,6 +1,6 @@
 #include "Timer.h"
 
-static Logging& logger = Logging::instance();
+static Logger& logger = Logger::instance();
 
 Timer::Timer(std::string_view name, LogLevel level): 
         objectLogLevel((level == LogLevel::_DEFAULT ? defaultTimerLogLevel : level)), 

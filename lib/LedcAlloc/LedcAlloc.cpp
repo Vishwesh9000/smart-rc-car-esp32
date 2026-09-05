@@ -1,6 +1,6 @@
 #include "LedcAlloc.h"
 
-static Logging& logger = Logging::instance();
+static Logger& logger = Logger::instance();
 
 
 void LedcAlloc::init() {
