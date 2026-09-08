@@ -8,7 +8,7 @@ Logger& Logger::instance() {
 }
 
 void Logger::addTag(std::string_view tag, LogLevel level) {
-    if (level == LogLevel::_DEFAULT) level = globalLogLevel;
+    if (level == LogLevel::_DEFAULT) level = defaultLogLevel;
 
     if (tagLevels.find(tag) != tagLevels.end()) log(_tag, LogLevel::ERROR, "Tag \"%.*s\" already exists", (int)tag.length(), tag.data());
 
@@ -17,7 +17,7 @@ void Logger::addTag(std::string_view tag, LogLevel level) {
 
 void Logger::setLevel(LogLevel level, std::string_view tag) {
     if (tag.empty()) {
-        globalLogLevel = level;
+        defaultLogLevel = level;
         return;
     }
     
@@ -31,10 +31,10 @@ void Logger::setLevel(LogLevel level, std::string_view tag) {
 void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     if (!shouldLog(tag, level)) return;
 
+    LogMessage logMsg = {.timestamp = millis(), .level = level, .value = std::nullopt};
+
     va_list args;
     va_start(args, msg);
-
-    LogMessage logMsg = {.timestamp = millis(), .level = level, .value = std::nullopt};
     int written = vsnprintf(logMsg.msg, sizeof(logMsg.msg), msg, args);
     va_end(args);
     snprintfErrorLogger(written, sizeof(logMsg.msg), LogLevel::FATAL, "vsnprintf() Failed", "vsnprintf() Failed: Buffer overflowed");
@@ -42,15 +42,16 @@ void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     size_t copyLen = std::min(tag.length(), sizeof(logMsg.tag));
     memcpy(logMsg.tag, tag.data(), copyLen);
     logMsg.tag[copyLen] = '\0';
-
-    BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-    if (flag != pdPASS) log(_tag, LogLevel::FATAL, "Sending log message through queue failed");
-
-    if (level == LogLevel::FATAL) vTaskDelay(pdMS_TO_TICKS(10'000));
+    if (xTaskGetCurrentTaskHandle() != task) {
+        BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
+        if (flag != pdPASS) log(_tag, LogLevel::FATAL, "Sending log message through queue failed");
+        if (level == LogLevel::FATAL) vTaskDelay(pdMS_TO_TICKS(10'000)); //Add feature to flush logs before terminating
+    }
+    else {
+        printLogMessage(&logMsg);
+        if (level == LogLevel::FATAL) ESP.restart(); //?Add feature to flush logs before terminating
+    }
 }
-
-
-
 
 void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, const char* msg, ...) {
     if (!shouldLog(tag, level)) return;
@@ -135,6 +136,8 @@ constexpr char Logger::toChar(const LogLevel level) {
             return 'I';
         case LogLevel::DEBUG:
             return 'D';
+        case LogLevel::VERBOSE:
+            return 'V';
     }
     return 'Z';
 }
@@ -151,8 +154,9 @@ Logger::Logger() {
         &task
     );
     configASSERT(ok == pdPASS);
-}
 
+    configASSERT(tagLevels.find(_tag) == tagLevels.end() || tagLevels.find(_taskTag) == tagLevels.end());
+}
 
 bool Logger::shouldLog(std::string_view tag, LogLevel level) {
     auto it = tagLevels.find(tag);
@@ -166,21 +170,11 @@ void Logger::logTask() {
     for (;;) {
         BaseType_t flag = xQueueReceive(queue, &logMsg, portMAX_DELAY);
         if (flag != pdPASS) {
-            Serial.println("logTask() Error: Error recieving from queue");
-            vTaskDelay(pdMS_TO_TICKS(1'000));
+            Serial.write(ANSI_RED "9999999999[LOG][E][LOGGER_TASK]: logTask() Error: Error recieving from queue\n" ANSI_RESET);
             continue;
         }
-        
-        if (logMsg.level == LogLevel::FATAL) Serial.print(ANSI_MAGENTA);
-        if (logMsg.level == LogLevel::ERROR) Serial.print(ANSI_RED);
-        if (logMsg.level == LogLevel::WARNING) Serial.print(ANSI_YELLOW);
-
-        Serial.printf("%6u[LOG][%c][%s]: ", logMsg.timestamp, toChar(logMsg.level), logMsg.tag);
-        Serial.println(logMsg.msg);
-        Serial.print(ANSI_RESET);
-        if (logMsg.level == LogLevel::FATAL) {
-            ESP.restart();
-        }
+        Timer _t("printLogMsg", LogLevel::VERBOSE);
+        printLogMessage(&logMsg);
     }
 }
 
@@ -193,4 +187,43 @@ void Logger::snprintfErrorLogger(int written, size_t bufferSize, LogLevel level,
     else if (written >= bufferSize) log(_tag, level, overflowError);
 }
 
+bool Logger::printLogMessage(LogMessage *logMsg) {
+    // Add std::optional value support
+
+    // if (logMsg.level == LogLevel::FATAL) Serial.print(ANSI_MAGENTA);
+    // if (logMsg.level == LogLevel::ERROR) Serial.print(ANSI_RED);
+    // if (logMsg.level == LogLevel::WARNING) Serial.print(ANSI_YELLOW);
+
+    // Serial.printf("%6u[LOG][%c][%s]: ", logMsg.timestamp, toChar(logMsg.level), logMsg.tag);
+    // Serial.println(logMsg.msg);
+    // Serial.print(ANSI_RESET);
+    // if (logMsg.level == LogLevel::FATAL) {
+    //     ESP.restart();
+    // }
+    // Timer _t("printLogMsg", LogLevel::VERBOSE);
+    const char* colorCode = "";
+    if (logMsg->level == LogLevel::FATAL) colorCode = ANSI_MAGENTA;
+    else if (logMsg->level == LogLevel::ERROR) colorCode = ANSI_RED;
+    else if (logMsg->level == LogLevel::WARNING) colorCode = ANSI_YELLOW;
+
+    // _t.recordCheckpoint("Color Codes");
+
+    char buffer[40 + sizeof(logMsg->tag) + sizeof(logMsg->msg) + 10]; //10 is extra padding
+    int written = snprintf(buffer, sizeof(buffer), "%s%10u[LOG][%c][%s]: %s\n" ANSI_RESET, 
+                                                    colorCode, logMsg->timestamp, toChar(logMsg->level), logMsg->tag, logMsg->msg);
+
+    // _t.recordCheckpoint("snprintf()");
+
+    if (written < 0) {
+        Serial.write(ANSI_RED "9999999999[LOG][E][LOGGER]: printLogMesage() Error: snprintf() Failed\n" ANSI_RESET);
+        return false;
+    }
+    if (static_cast<long long>(written) < static_cast<long long>(sizeof(buffer))) Serial.write(buffer, written);
+    else {
+        Serial.write(buffer, sizeof(buffer)-1);
+        Serial.write(ANSI_RED "... [TRUNCATED]" ANSI_RESET);
+    }
+    // _t.recordCheckpoint("End");
+    return true;
+}
 

@@ -1,5 +1,9 @@
 //Logger.h
 #pragma once
+
+#include "LogLevels.h"
+#include "../Timer/Timer.h"
+
 #include <map>
 #include <string>
 #include <string_view>
@@ -33,25 +37,6 @@
 #define ANSI_UNDERLINE  ""
 #endif
 
-
-struct StringHash {
-    using is_transparent = void;
-    size_t operator()(std::string_view sv) const {
-        return std::hash<std::string_view>{}(sv);
-    }
-};
-
-enum class LogLevel {
-    _DEFAULT = -1,
-    NONE,
-    FATAL,
-    ERROR,
-    WARNING,
-    INFO,
-    DEBUG,
-    VERBOSE
-};
-
 enum class MemFlag {
     INTERNAL = 1 << 0,
     SPI_RAM = 1 << 1,
@@ -83,12 +68,13 @@ constexpr bool operator!=(int i, MemFlag f) {
 
 class Logger {
     private:
-    static constexpr std::string_view _tag = "LOGGER";
-    LogLevel globalLogLevel = LogLevel::VERBOSE;
-    std::map<std::string, LogLevel, std::less<>> tagLevels = {{std::string(_tag), LogLevel::VERBOSE}};
+    static constexpr std::string_view _tag = "LOGGER", _taskTag = "LOGGER_TASK";
+    LogLevel defaultLogLevel = LogLevel::VERBOSE;
+    static constexpr LogLevel initialInternalLogLevel = LogLevel::VERBOSE, initialLogTaskLogLevel = LogLevel::VERBOSE;
     static constexpr size_t logBufferSize=96, tagSize=16;
-    
-    public:
+    static constexpr UBaseType_t maxQueueMessages = 10, priority = 5;
+    static constexpr size_t stackSize = 4096;
+
     struct LogMessage {
         uint32_t timestamp;
         char tag[tagSize];
@@ -96,6 +82,8 @@ class Logger {
         LogLevel level;
         std::optional<double> value;
     };
+    
+    public:
     static Logger& instance();
     void addTag(std::string_view tag, LogLevel level = LogLevel::_DEFAULT);
     void setLevel(LogLevel level, std::string_view tag = std::string_view{});
@@ -107,8 +95,8 @@ class Logger {
     private:
     TaskHandle_t task;
     QueueHandle_t queue;
-    UBaseType_t maxQueueMessages = 10, priority = 5;
-    size_t stackSize = 4096;
+
+    std::map<std::string, LogLevel, std::less<>> tagLevels = {{std::string(_tag), initialInternalLogLevel}, {std::string(_taskTag), initialLogTaskLogLevel}};
 
     Logger();
     Logger(const Logger&) = delete;
@@ -120,6 +108,7 @@ class Logger {
     void logTask();
     static void taskFunction(void *logObj);
     void snprintfErrorLogger(int written, size_t bufferSize, LogLevel level, const char *failedError, const char *overflowError);
+    bool printLogMessage(LogMessage *logMsg);
 };
 
 
