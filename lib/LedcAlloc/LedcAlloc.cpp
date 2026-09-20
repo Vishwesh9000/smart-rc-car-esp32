@@ -1,18 +1,17 @@
 #include "LedcAlloc.h"
-
-static Logger& logger = Logger::instance();
+#include "Logger.h"
 
 
 void LedcAlloc::init() {
     if (initDone) return;
-    logger.addTag(logTag, initialLogLevel);
+    LOG_ADD_TAG(logTag, initialLogLevel);
     pins.fill(statusUnattached);
     initDone = true;
 }
 
 bool LedcAlloc::attachPin(const uint8_t pin, const uint32_t freq, const uint8_t resolutionBits) {
     if (pin >= maxNumPins) {
-        logger.log(logTag, LogLevel::FATAL, "Pin Invalid");
+        LOG_F(logTag, "Pin Invalid");
         return false;
     }
     int channel = findFreeChannel();
@@ -23,13 +22,13 @@ bool LedcAlloc::attachPin(const uint8_t pin, const uint32_t freq, const uint8_t 
     pins[pin] = channel;
     channels[channel] = true;
     numFreeChannels--;
-    logger.log(logTag, LogLevel::INFO, "Configured pin %u to channel %u", pin, channel);
+    LOG_I(logTag, "Configured pin %u to channel %u", pin, channel);
     return true;
 }
 
 bool LedcAlloc::detatchPin(const uint8_t pin) {
     if (pin >= maxNumPins) {
-        logger.log(logTag, LogLevel::FATAL, "Pin Invalid");
+        LOG_F(logTag, "Pin Invalid");
         return false;
     }
 
@@ -43,7 +42,7 @@ bool LedcAlloc::detatchPin(const uint8_t pin) {
 
 bool LedcAlloc::write(const uint8_t pin, const uint32_t duty) {
     if (pin >= maxNumPins) {
-        logger.log(logTag, LogLevel::FATAL, "Pin Invalid");
+        LOG_F(logTag, "Pin Invalid");
         return false;
     }
 
@@ -56,7 +55,7 @@ uint8_t LedcAlloc::freeChannels() {
 }
 uint8_t LedcAlloc::pinToChannel(const uint8_t pin) {
     if (pin >= maxNumPins) {
-        logger.log(logTag, LogLevel::FATAL, "Pin Invalid");
+        LOG_F(logTag, "Pin Invalid");
         return false;
     }
     return pins[pin];

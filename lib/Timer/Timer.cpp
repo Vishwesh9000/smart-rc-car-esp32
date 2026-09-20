@@ -1,7 +1,8 @@
 #include "Timer.h"
 #include "../Logger/Logger.h"
 
-static Logger& logger = Logger::instance();
+// TODO: Add macro based timers
+//TODO: Support Logger.h macros
 
 Timer::Timer(std::string_view name, LogLevel level): 
         objectLogLevel((level == LogLevel::_DEFAULT ? defaultTimerLogLevel : level)), 
@@ -17,7 +18,7 @@ Timer::~Timer() {
         if (!objectName.empty()) name = objectName;
         else name = "Timer";
         bool printMicros = endTimeMS-startTimeMS < 100;
-        logger.log(tag, timerLogLevel, "%.*s: %lu%s", static_cast<int>(name.length()), name.data(), 
+        Logger::instance().log(tag, timerLogLevel, "%.*s: %lu%s", static_cast<int>(name.length()), name.data(), 
                                         static_cast<unsigned long>(printMicros ? endTimeUS - startTimeUS : endTimeMS-startTimeMS), 
                                         printMicros ? "us" : "ms");
     }
@@ -25,12 +26,12 @@ Timer::~Timer() {
 
 void Timer::init() {
     if (!initDone) {
-        logger.addTag(tag, initialLogLevel);
+        Logger::instance().addTag(tag, initialLogLevel);
         initDone = true;
     }
 }
 void Timer::start(std::string_view name, LogLevel level) {
-    if (funcTimer) logger.log(tag, LogLevel::WARNING, "Timer started twice before calling end()");
+    if (funcTimer) LOG_W(tag, "Timer started twice before calling end()");
     if (level != LogLevel::_DEFAULT) timerLogLevel = level;
     else timerLogLevel = objectLogLevel;
 
@@ -43,7 +44,7 @@ void Timer::start(std::string_view name, LogLevel level) {
 
 uint32_t Timer::recordCheckpoint(std::string_view checkPointName, LogLevel level) {
     if (!(funcTimer || objTimer)) {
-        logger.log(tag, LogLevel::ERROR, "Can't record checkpoint: No timer running");
+        LOG_E(tag, "Can't record checkpoint: No timer running");
         return 0;
     }
     uint32_t timeDiffMS = millis() - startTimeMS, timeDiffUS = micros() - startTimeUS;
@@ -56,7 +57,7 @@ uint32_t Timer::recordCheckpoint(std::string_view checkPointName, LogLevel level
     else name = "Timer";
     
     bool printMicros = timeDiffMS < 100;
-    logger.log(tag, level, "%.*s: (%.*s) %lu%s", static_cast<int>(name.length()), name.data(), static_cast<int>(checkPointName.length()), checkPointName.data(), 
+    Logger::instance().log(tag, level, "%.*s: (%.*s) %lu%s", static_cast<int>(name.length()), name.data(), static_cast<int>(checkPointName.length()), checkPointName.data(), 
                                                 static_cast<unsigned long>(printMicros ? timeDiffUS : timeDiffMS),
                                                 printMicros ? "us" : "ms");
     return timeDiffMS;
@@ -64,7 +65,7 @@ uint32_t Timer::recordCheckpoint(std::string_view checkPointName, LogLevel level
 
 uint32_t Timer::end() {
     if (!funcTimer) {
-        logger.log(tag, LogLevel::ERROR, "Timer::end() not executed: Timer not started");
+        LOG_E(tag, "Timer::end() not executed: Timer not started");
         return 0;
     }
     uint32_t timeDiffMS = millis()-startTimeMS, timeDiffUS = micros()-startTimeUS;
@@ -74,7 +75,7 @@ uint32_t Timer::end() {
     else name = "Timer";
 
     bool printMicros = timeDiffMS < 100;
-    logger.log(tag, timerLogLevel, "%.*s: %lu%s", static_cast<int>(name.length()), name.data(), 
+    Logger::instance().log(tag, timerLogLevel, "%.*s: %lu%s", static_cast<int>(name.length()), name.data(), 
                                     static_cast<unsigned long>(printMicros ? timeDiffUS : timeDiffMS),
                                     printMicros ? "us" : "ms");
     funcTimer = false;

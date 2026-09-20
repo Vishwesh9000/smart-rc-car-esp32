@@ -11,7 +11,6 @@
 //Log Tags
 constexpr std::string_view MAIN = "MAIN", MOTOR1 = "MOTOR1", MOTOR2 = "MOTOR2";
 
-static Logger& logger = Logger::instance();
 DRV8833_DCMotor motor1(M1_F, M1_B, MOTOR1, LogLevel::VERBOSE), motor2(M2_F, M2_B, MOTOR2, LogLevel::VERBOSE);
 
 void setup() {
@@ -19,20 +18,20 @@ void setup() {
     Timer::init();
     Timer t1 = Timer("Setup", LogLevel::DEBUG);
     Serial.begin(115200);
-    logger.setLevel(LogLevel::VERBOSE);
-    logger.addTag(MAIN, LogLevel::VERBOSE);
-    logger.log(MAIN, LogLevel::INFO, "Sketch Started");
+    LOG_SET_LEVEL(LogLevel::VERBOSE, Logger::tag);
+    LOG_ADD_TAG(MAIN, LogLevel::VERBOSE);
+    LOG_I(MAIN, "Sketch Started");
     motor1.begin();
     motor2.begin();
     motor1.setSpeed(100);
     motor2.setSpeed(100);
-    logger.log(MAIN, LogLevel::ERROR, "EXAMPLE ERROR");
-    logger.logMem(MAIN, LogLevel::DEBUG, MemFlag::ALL, "End of setup");
-    logger.log(MAIN, LogLevel::INFO, "Finished Setup");
+    LOG_E(MAIN, "EXAMPLE ERROR");
+    LOG_MEM_D(MAIN, MemFlag::ALL, "End of setup");
+    LOG_I(MAIN, "Finished Setup");
 }
 
 void loop() {
-    logger.log(MAIN, LogLevel::DEBUG, "LOOP");
+    LOG_D(MAIN, "LOOP");
     // motor1.setDirection(1);
     // delay(5000);
 

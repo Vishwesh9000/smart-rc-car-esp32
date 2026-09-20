@@ -2,6 +2,8 @@
 #include "Arduino.h"
 #include "Logger.h"
 
+//TODO Don't crash on logging buffer overflows
+
 Logger& Logger::instance() {
     static Logger logger;
     return logger;
@@ -10,20 +12,15 @@ Logger& Logger::instance() {
 void Logger::addTag(std::string_view tag, LogLevel level) {
     if (level == LogLevel::_DEFAULT) level = defaultLogLevel;
 
-    if (tagLevels.find(tag) != tagLevels.end()) log(_tag, LogLevel::ERROR, "Tag \"%.*s\" already exists", (int)tag.length(), tag.data());
+    if (tagLevels.find(tag) != tagLevels.end()) LOG_E(tag, "Tag \"%.*s\" already exists", (int)tag.length(), tag.data());
 
     tagLevels.insert_or_assign(std::string(tag), level);
 }
 
 void Logger::setLevel(LogLevel level, std::string_view tag) {
-    if (tag.empty()) {
-        defaultLogLevel = level;
-        return;
-    }
-    
     auto it = tagLevels.find(tag);
     if (it == tagLevels.end()) {
-        log(_tag, LogLevel::FATAL, "Can't set tag level: Tag \"%.*s\" does not exist", (int)tag.length(), tag.data());
+        LOG_F(tag, "Can't set tag level: Tag \"%.*s\" does not exist", (int)tag.length(), tag.data());
     }
     it->second = level;
 }
@@ -37,19 +34,21 @@ void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     va_start(args, msg);
     int written = vsnprintf(logMsg.msg, sizeof(logMsg.msg), msg, args);
     va_end(args);
-    snprintfErrorLogger(written, sizeof(logMsg.msg), LogLevel::FATAL, "vsnprintf() Failed", "vsnprintf() Failed: Buffer overflowed");
+    snprintfErrorLogger<LogLevel::FATAL>(written, sizeof(logMsg.msg), "vsnprintf() Failed", "vsnprintf() Failed: Buffer overflowed");
 
     size_t copyLen = std::min(tag.length(), sizeof(logMsg.tag));
     memcpy(logMsg.tag, tag.data(), copyLen);
     logMsg.tag[copyLen] = '\0';
+
+    //TODO: Add feature to flush logs before terminating
     if (xTaskGetCurrentTaskHandle() != task) {
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-        if (flag != pdPASS) log(_tag, LogLevel::FATAL, "Sending log message through queue failed");
-        if (level == LogLevel::FATAL) vTaskDelay(pdMS_TO_TICKS(10'000)); //Add feature to flush logs before terminating
+        if (flag != pdPASS) LOG_F(tag, "Sending log message through queue failed");
+        if (level == LogLevel::FATAL) vTaskDelay(pdMS_TO_TICKS(10'000));
     }
     else {
         printLogMessage(&logMsg);
-        if (level == LogLevel::FATAL) ESP.restart(); //?Add feature to flush logs before terminating
+        if (level == LogLevel::FATAL) ESP.restart(); 
     }
 }
 
@@ -66,53 +65,53 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
 
     constexpr std::string_view prefix = "Memory Stats: (";
     if (prefix.length() < sizeof(logMsg.msg)) memcpy(logMsg.msg, prefix.data(), prefix.length());
-    else log(_tag, LogLevel::FATAL, "logMem() Failed(1): Buffer overflow");
+    else LOG_F(tag, "logMem() Failed(1): Buffer overflow");
     curPos += prefix.length();
 
     va_list args;
     va_start(args, msg);
     int written = vsnprintf(curPos, endPos-curPos, msg, args);
     va_end(args);
-    snprintfErrorLogger(written, endPos-curPos, LogLevel::FATAL, "logMem() Failed(2): vsnprintf() Error", "logMem() Failed(2): Buffer Overflow");
+    snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(2): vsnprintf() Error", "logMem() Failed(2): Buffer Overflow");
     curPos += written;
 
-    if (endPos-curPos < 4) log(_tag, LogLevel::FATAL, "logMem() Failed(3): Buffer Overflowed");
+    if (endPos-curPos < 4) LOG_F(tag, "logMem() Failed(3): Buffer Overflowed");
     *(curPos++) = ')';
     *(curPos++) = ':';
     *(curPos++) = '\n';
     *curPos = '\0';
     
     BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-    if (flag != pdPASS) log(_tag, LogLevel::FATAL, "logMem() Failed: Failed to send through queue");
+    if (flag != pdPASS) LOG_F(tag, "logMem() Failed: Failed to send through queue");
     curPos = logMsg.msg;
 
     bool printBlockSize = ((flags & MemFlag::BLOCK) != 0);
     if ((flags & MemFlag::INTERNAL) != 0) {
         written = snprintf(curPos, endPos-curPos, "\tINTERNAL RAM: %lu", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-        snprintfErrorLogger(written, endPos-curPos, LogLevel::FATAL, "logMem() Failed(4): snprintf() Error", "logMem() Failed(4): Buffer Overflowed");
+        snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(4): snprintf() Error", "logMem() Failed(4): Buffer Overflowed");
         curPos += written;
         if (printBlockSize) {
             written = snprintf(curPos, endPos-curPos, " (Block: %lu)", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-            snprintfErrorLogger(written, endPos-curPos, LogLevel::FATAL, "logMem() Failed(5): snprintf() Error", "logMem() Failed(5): Buffer Overflowed");
+            snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(5): snprintf() Error", "logMem() Failed(5): Buffer Overflowed");
         }
 
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-        if (flag != pdPASS) log(_tag, LogLevel::FATAL, "logMem() Failed: Failed to send through queue");
+        if (flag != pdPASS) LOG_F(tag, "logMem() Failed: Failed to send through queue");
         curPos = logMsg.msg;
     }
 
     if ((flags & MemFlag::SPI_RAM) != 0) {
         written = snprintf(curPos, endPos-curPos, "\tSPI RAM: %lu", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-        snprintfErrorLogger(written, endPos-curPos, LogLevel::FATAL, "logMem() Failed(7): snprintf() Error", "logMem() Failed(7): Buffer Overflowed");
+        snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(7): snprintf() Error", "logMem() Failed(7): Buffer Overflowed");
         curPos += written;
         if (printBlockSize) {
             written = snprintf(curPos, endPos-curPos, " (Block: %lu)", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
-            snprintfErrorLogger(written, endPos-curPos, LogLevel::FATAL, "logMem() Failed(8): snprintf() Error", "logMem() Failed(8): Buffer Overflowed");
+            snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(8): snprintf() Error", "logMem() Failed(8): Buffer Overflowed");
             curPos += written;
         }
 
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-        if (flag != pdPASS) log(_tag, LogLevel::FATAL, "logMem() Failed: Failed to send through queue");
+        if (flag != pdPASS) LOG_F(tag, "logMem() Failed: Failed to send through queue");
         curPos = logMsg.msg;
     }
 
@@ -155,12 +154,12 @@ Logger::Logger() {
     );
     configASSERT(ok == pdPASS);
 
-    configASSERT(tagLevels.find(_tag) == tagLevels.end() || tagLevels.find(_taskTag) == tagLevels.end());
+    assert(tagLevels.find(tag) != tagLevels.end() && tagLevels.find(taskTag) != tagLevels.end());
 }
 
 bool Logger::shouldLog(std::string_view tag, LogLevel level) {
     auto it = tagLevels.find(tag);
-    if (it == tagLevels.end()) log(_tag, LogLevel::FATAL, "Tag \"%.*s\" doesn't exist", (int)tag.length(), tag.data());
+    if (it == tagLevels.end()) LOG_F(tag, "Tag \"%.*s\" doesn't exist", (int)tag.length(), tag.data());
     if (level <= it->second) return true;
     else return false;
 }
@@ -180,11 +179,6 @@ void Logger::logTask() {
 
 void Logger::taskFunction(void *logObj) {
     static_cast<Logger*>(logObj)->logTask();
-}
-
-void Logger::snprintfErrorLogger(int written, size_t bufferSize, LogLevel level, const char *failedError, const char *overflowError) {
-    if (written < 0) log(_tag, level, failedError);
-    else if (written >= bufferSize) log(_tag, level, overflowError);
 }
 
 bool Logger::printLogMessage(LogMessage *logMsg) {

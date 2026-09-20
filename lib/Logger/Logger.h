@@ -11,6 +11,10 @@
 #include <type_traits>
 #include <algorithm>
 
+#ifndef LOG_COMPILE_LEVEL
+#define LOG_COMPILE_LEVEL static_cast<int>(LogLevel::VERBOSE)
+#endif
+
 #define ANSI_CODES //Comment out if monitor doesn't support the codes
 
 #ifdef ANSI_CODES
@@ -67,10 +71,11 @@ constexpr bool operator!=(int i, MemFlag f) {
 }
 
 class Logger {
-    private:
-    static constexpr std::string_view _tag = "LOGGER", _taskTag = "LOGGER_TASK";
+    public:
+    static constexpr std::string_view tag = "LOGGER", taskTag = "LOGGER_TASK";
     LogLevel defaultLogLevel = LogLevel::VERBOSE;
-    static constexpr LogLevel initialInternalLogLevel = LogLevel::VERBOSE, initialLogTaskLogLevel = LogLevel::VERBOSE;
+    static constexpr LogLevel logCompileLevel = static_cast<LogLevel>(LOG_COMPILE_LEVEL);
+
     static constexpr size_t logBufferSize=96, tagSize=16;
     static constexpr UBaseType_t maxQueueMessages = 10, priority = 5;
     static constexpr size_t stackSize = 4096;
@@ -85,8 +90,8 @@ class Logger {
     
     public:
     static Logger& instance();
-    void addTag(std::string_view tag, LogLevel level = LogLevel::_DEFAULT);
-    void setLevel(LogLevel level, std::string_view tag = std::string_view{});
+    void addTag(std::string_view tag, LogLevel level);
+    void setLevel(LogLevel level, std::string_view tag);
     void log(std::string_view tag, LogLevel level, const char* msg, ...);
     void logFromISR(LogMessage message);
     void logMem(std::string_view tag, LogLevel level, MemFlag flags, const char* msg, ...);
@@ -96,7 +101,8 @@ class Logger {
     TaskHandle_t task;
     QueueHandle_t queue;
 
-    std::map<std::string, LogLevel, std::less<>> tagLevels = {{std::string(_tag), initialInternalLogLevel}, {std::string(_taskTag), initialLogTaskLogLevel}};
+    static constexpr LogLevel initialInternalLogLevel = LogLevel::VERBOSE, initialLogTaskLogLevel = LogLevel::VERBOSE;
+    std::map<std::string, LogLevel, std::less<>> tagLevels = {{std::string(tag), initialInternalLogLevel}, {std::string(taskTag), initialLogTaskLogLevel}};
 
     Logger();
     Logger(const Logger&) = delete;
@@ -107,9 +113,67 @@ class Logger {
     bool shouldLog(std::string_view tag, LogLevel level);
     void logTask();
     static void taskFunction(void *logObj);
-    void snprintfErrorLogger(int written, size_t bufferSize, LogLevel level, const char *failedError, const char *overflowError);
+    template<LogLevel level>
+    void snprintfErrorLogger(int written, size_t bufferSize, const char *failedError, const char *overflowError);
     bool printLogMessage(LogMessage *logMsg);
 };
 
+#define LOG_AT(tag, level, msg, ...)                                \
+    do {                                                            \
+        if constexpr (level <= Logger::logCompileLevel) {           \
+            Logger::instance().log(tag, level, msg, ##__VA_ARGS__); \
+        }                                                           \
+    } while (0)
+
+#define LOG_F(tag, msg, ...) LOG_AT(tag, LogLevel::FATAL, msg, ##__VA_ARGS__)
+#define LOG_E(tag, msg, ...) LOG_AT(tag, LogLevel::ERROR, msg, ##__VA_ARGS__)
+#define LOG_W(tag, msg, ...) LOG_AT(tag, LogLevel::WARNING, msg, ##__VA_ARGS__)
+#define LOG_I(tag, msg, ...) LOG_AT(tag, LogLevel::INFO, msg, ##__VA_ARGS__)
+#define LOG_D(tag, msg, ...) LOG_AT(tag, LogLevel::DEBUG, msg, ##__VA_ARGS__)
+#define LOG_V(tag, msg, ...) LOG_AT(tag, LogLevel::VERBOSE, msg, ##__VA_ARGS__)
+
+#define LOG_MEM_AT(tag, level, flags, msg, ...)                                 \
+    do {                                                                        \
+        if constexpr (level <= Logger::logCompileLevel) {                       \
+            Logger::instance().logMem(tag, level, flags, msg, ##__VA_ARGS__);   \
+        }                                                                       \
+    } while (0)                                                                 \
+
+#define LOG_MEM_F(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::FATAL, flags, msg, ##__VA_ARGS__)
+#define LOG_MEM_E(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::ERROR, flags, msg, ##__VA_ARGS__)
+#define LOG_MEM_W(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::WARNING, flags, msg, ##__VA_ARGS__)
+#define LOG_MEM_I(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::INFO, flags, msg, ##__VA_ARGS__)
+#define LOG_MEM_D(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::DEBUG, flags, msg, ##__VA_ARGS__)
+#define LOG_MEM_V(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::VERBOSE, flags, msg, ##__VA_ARGS__)
+
+#define LOG_ISR_AT(level, logMsg)                                               \
+    do {                                                                        \
+        if constexpr (level <= Logger::logCompileLevel) {                       \
+            Logger::instance().logFromISR(level, logMsg);                       \
+        }                                                                       \
+    } while (0)
 
 
+#define LOG_ISR_F(logMsg) LOG_ISR_AT(LogLevel::FATAL, logMsg)
+#define LOG_ISR_E(logMsg) LOG_ISR_AT(LogLevel::ERROR, logMsg)
+#define LOG_ISR_W(logMsg) LOG_ISR_AT(LogLevel::WARNING, logMsg)
+#define LOG_ISR_I(logMsg) LOG_ISR_AT(LogLevel::INFO, logMsg)
+#define LOG_ISR_D(logMsg) LOG_ISR_AT(LogLevel::DEBUG, logMsg)
+#define LOG_ISR_V(logMsg) LOG_ISR_AT(LogLevel::VERBOSE, logMsg)
+
+// TODO: Reduce repetetiveness of reg, mem, and ISR macros
+// #define LOG_COMPILE_TIME_CHECK(level, loggerFunc)                               \
+//     do {                                                                        \
+//         if constexpr (level <= Logger::logCompileLevel) {                       \
+//             Logger::instance().loggerFunc                                       \
+//         }                                                                       \
+//     } while (0)
+
+// #define LOG_ISR
+
+
+#define LOG_ADD_TAG(tag, level) Logger::instance().addTag(tag, level)
+#define LOG_SET_LEVEL(level, tag) Logger::instance().setLevel(level, tag)
+
+
+#include "Logger.tpp"

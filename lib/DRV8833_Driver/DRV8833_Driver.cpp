@@ -1,19 +1,17 @@
 #include "DRV8833_Driver.h"
-
-
-static Logger& logger = Logger::instance();
+#include "Logger.h"
 
 DRV8833_DCMotor::DRV8833_DCMotor(int f, int b, std::string_view motorID, LogLevel level): F_PIN(f), B_PIN(b), targetPower(0), power(0), direction(0), tag(motorID.empty() ? "MOTOR" : motorID), initLogLevel(level) {}
 
 void DRV8833_DCMotor::begin() {
-    logger.addTag(tag, initLogLevel);
+    LOG_ADD_TAG(tag, initLogLevel);
     LedcAlloc::init();
-    if (!LedcAlloc::attachPin(F_PIN, 20000, 8))  logger.log(tag, LogLevel::FATAL, "Couldn't set up ledc for forward pin");
-    if (!LedcAlloc::attachPin(B_PIN, 20000, 8)) logger.log(tag, LogLevel::FATAL, "Couldn't set up ledc for backward pin");
+    if (!LedcAlloc::attachPin(F_PIN, 20000, 8))  LOG_F(tag, "Couldn't set up ledc for forward pin");
+    if (!LedcAlloc::attachPin(B_PIN, 20000, 8)) LOG_F(tag, "Couldn't set up ledc for backward pin");
 }
 void DRV8833_DCMotor::setDirection(int dir) {
     if (dir > 1 || dir < -1) {
-        logger.log(tag, LogLevel::ERROR, "Invalid direction");
+        LOG_E(tag, "Invalid direction");
         return;
     }
     direction = dir;
@@ -21,7 +19,7 @@ void DRV8833_DCMotor::setDirection(int dir) {
 }
 void DRV8833_DCMotor::setSpeed(int speed) {
     if (speed < 0 || speed > 100) {
-        logger.log(tag, LogLevel::ERROR, "Invalid speed");
+        LOG_E(tag, "Invalid speed");
         return;
     }
     targetPower = speed;
@@ -29,7 +27,7 @@ void DRV8833_DCMotor::setSpeed(int speed) {
 }
 void DRV8833_DCMotor::setVelocity(int p) {
     if (p < -100 || p > 100) {
-        logger.log(tag, LogLevel::ERROR, "Invalid velocity");
+        LOG_E(tag, "Invalid velocity");
         return;
     }
     else if (p > 0) {
@@ -67,7 +65,7 @@ void DRV8833_DCMotor::updateMotor() {
         backward = 0;
         power = 0;
     }
-    if (!LedcAlloc::write(F_PIN, forward)) logger.log(tag, LogLevel::FATAL, "ERROR: Couldn't set speed");
-    if (!LedcAlloc::write(B_PIN, backward)) logger.log(tag, LogLevel::FATAL, "ERROR: Couldn't set speed");
-    logger.log(tag, LogLevel::DEBUG, "F: %d B: %d", forward, backward);
+    if (!LedcAlloc::write(F_PIN, forward)) LOG_F(tag, "ERROR: Couldn't set speed");
+    if (!LedcAlloc::write(B_PIN, backward)) LOG_F(tag, "ERROR: Couldn't set speed");
+    LOG_D(tag, "F: %d B: %d", forward, backward);
 }

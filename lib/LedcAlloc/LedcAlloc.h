@@ -1,6 +1,6 @@
 #pragma once
 #include "Arduino.h"
-#include "Logger.h"
+#include "LogLevels.h"
 #include <array>
 #include <string_view>
 
