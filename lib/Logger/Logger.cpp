@@ -36,7 +36,7 @@ void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     va_end(args);
     snprintfErrorLogger<LogLevel::FATAL>(written, sizeof(logMsg.msg), "vsnprintf() Failed", "vsnprintf() Failed: Buffer overflowed");
 
-    size_t copyLen = std::min(tag.length(), sizeof(logMsg.tag));
+    size_t copyLen = std::min<size_t>(tag.length(), sizeof(logMsg.tag));
     memcpy(logMsg.tag, tag.data(), copyLen);
     logMsg.tag[copyLen] = '\0';
 
@@ -57,7 +57,7 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
     
     LogMessage logMsg = {.timestamp = millis(), .level = level, .value = std::nullopt};
 
-    size_t copyLen = std::min(tag.length(), sizeof(logMsg.tag)-1);
+    size_t copyLen = std::min<size_t>(tag.length(), sizeof(logMsg.tag));
     memcpy(logMsg.tag, tag.data(), copyLen);
     logMsg.tag[copyLen] = '\0';
 

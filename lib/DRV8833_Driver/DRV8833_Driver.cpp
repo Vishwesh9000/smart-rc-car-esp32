@@ -1,13 +1,14 @@
 #include "DRV8833_Driver.h"
 #include "Logger.h"
 
-DRV8833_DCMotor::DRV8833_DCMotor(int f, int b, std::string_view motorID, LogLevel level): F_PIN(f), B_PIN(b), targetPower(0), power(0), direction(0), tag(motorID.empty() ? "MOTOR" : motorID), initLogLevel(level) {}
+DRV8833_DCMotor::DRV8833_DCMotor(int f, int b, std::string_view motorID, LogLevel level):
+        F_PIN(f), B_PIN(b), targetPower(0), power(0), direction(0),
+        tag(motorID.empty() ? "MOTOR" : motorID), initLogLevel(level) {}
 
 void DRV8833_DCMotor::begin() {
     LOG_ADD_TAG(tag, initLogLevel);
-    LedcAlloc::init();
-    if (!LedcAlloc::attachPin(F_PIN, 20000, 8))  LOG_F(tag, "Couldn't set up ledc for forward pin");
-    if (!LedcAlloc::attachPin(B_PIN, 20000, 8)) LOG_F(tag, "Couldn't set up ledc for backward pin");
+    if (!ledcAttach(F_PIN, 20000, 8))  LOG_F(tag, "Couldn't set up ledc for forward pin");
+    if (!ledcAttach(B_PIN, 20000, 8)) LOG_F(tag, "Couldn't set up ledc for backward pin");
 }
 void DRV8833_DCMotor::setDirection(int dir) {
     if (dir > 1 || dir < -1) {
@@ -65,7 +66,7 @@ void DRV8833_DCMotor::updateMotor() {
         backward = 0;
         power = 0;
     }
-    if (!LedcAlloc::write(F_PIN, forward)) LOG_F(tag, "ERROR: Couldn't set speed");
-    if (!LedcAlloc::write(B_PIN, backward)) LOG_F(tag, "ERROR: Couldn't set speed");
+    if (!ledcWrite(F_PIN, forward)) LOG_F(tag, "ERROR: Couldn't set speed");
+    if (!ledcWrite(B_PIN, backward)) LOG_F(tag, "ERROR: Couldn't set speed");
     LOG_D(tag, "F: %d B: %d", forward, backward);
 }

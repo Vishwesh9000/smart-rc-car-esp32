@@ -2,7 +2,6 @@
 #include <string_view>
 #include "Arduino.h"
 #include "LogLevels.h"
-#include "LedcAlloc.h"
 
 class DRV8833_DCMotor {
     public:
