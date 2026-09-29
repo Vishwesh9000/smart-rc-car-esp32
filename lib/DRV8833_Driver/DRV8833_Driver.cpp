@@ -5,7 +5,8 @@ DRV8833_DCMotor::DRV8833_DCMotor(int f, int b, std::string_view motorID, LogLeve
         F_PIN(f), B_PIN(b), targetPower(0), power(0), direction(0),
         tag(motorID.empty() ? "MOTOR" : motorID), initLogLevel(level) {}
 
-void DRV8833_DCMotor::begin() {
+void DRV8833_DCMotor::init() {
+    Logger::init();
     LOG_ADD_TAG(tag, initLogLevel);
     if (!ledcAttach(F_PIN, 20000, 8))  LOG_F(tag, "Couldn't set up ledc for forward pin");
     if (!ledcAttach(B_PIN, 20000, 8)) LOG_F(tag, "Couldn't set up ledc for backward pin");

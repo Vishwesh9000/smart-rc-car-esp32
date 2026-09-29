@@ -1,18 +1,39 @@
 //Logger.cpp
 #include "Arduino.h"
 #include "Logger.h"
+#include <inttypes.h>
 
 //TODO Don't crash on logging buffer overflows
 
-Logger& Logger::instance() {
+void Logger::LogMessage::assignTagAndMessage(const char* tag, const char* msg) {
+    size_t copyLen;
+    if (tag != nullptr) {
+        copyLen = strnlen(tag, sizeof(this->tag)-1);
+        memcpy(this->tag, tag, copyLen);
+        this->tag[copyLen] = '\0';
+    }
+    if (msg != nullptr) {
+        copyLen = strnlen(msg, sizeof(this->msg)-1);
+        memcpy(this->msg, msg, copyLen);
+        this->msg[copyLen] = '\0';
+    }
+}
+
+Logger *Logger::_instance = nullptr;
+
+void Logger::init() {
     static Logger logger;
-    return logger;
+    _instance = &logger;
+}
+
+Logger& Logger::instance() {
+    return *_instance;
 }
 
 void Logger::addTag(std::string_view tag, LogLevel level) {
     if (level == LogLevel::_DEFAULT) level = defaultLogLevel;
 
-    if (tagLevels.find(tag) != tagLevels.end()) LOG_E(tag, "Tag \"%.*s\" already exists", (int)tag.length(), tag.data());
+    if (tagLevels.find(tag) != tagLevels.end()) LOG_E(this->tag, "Tag \"%.*s\" already exists", (int)tag.length(), tag.data());
 
     tagLevels.insert_or_assign(std::string(tag), level);
 }
@@ -20,7 +41,7 @@ void Logger::addTag(std::string_view tag, LogLevel level) {
 void Logger::setLevel(LogLevel level, std::string_view tag) {
     auto it = tagLevels.find(tag);
     if (it == tagLevels.end()) {
-        LOG_F(tag, "Can't set tag level: Tag \"%.*s\" does not exist", (int)tag.length(), tag.data());
+        LOG_F(this->tag, "Can't set tag level: Tag \"%.*s\" does not exist", (int)tag.length(), tag.data());
     }
     it->second = level;
 }
@@ -28,7 +49,7 @@ void Logger::setLevel(LogLevel level, std::string_view tag) {
 void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     if (!shouldLog(tag, level)) return;
 
-    LogMessage logMsg = {.timestamp = millis(), .level = level, .value = std::nullopt};
+    LogMessage logMsg = {.timestamp = esp_timer_get_time(), .level = level, .value = std::nullopt};
 
     va_list args;
     va_start(args, msg);
@@ -43,7 +64,7 @@ void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     //TODO: Add feature to flush logs before terminating
     if (xTaskGetCurrentTaskHandle() != task) {
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-        if (flag != pdPASS) LOG_F(tag, "Sending log message through queue failed");
+        if (flag != pdPASS) LOG_F(this->tag, "Sending log message through queue failed");
         if (level == LogLevel::FATAL) vTaskDelay(pdMS_TO_TICKS(10'000));
     }
     else {
@@ -52,10 +73,18 @@ void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     }
 }
 
+void Logger::logFromISR(LogLevel level, LogMessage &logMsg, BaseType_t &higherPriorityTaskWoken) {
+    logMsg.timestamp = esp_timer_get_time();
+    logMsg.level = level;
+    logMsg.tag[sizeof(logMsg.tag)-1] = '\0';
+    logMsg.msg[sizeof(logMsg.msg)-1] = '\0';
+    xQueueSendFromISR(queue, &logMsg, &higherPriorityTaskWoken);
+}
+
 void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, const char* msg, ...) {
     if (!shouldLog(tag, level)) return;
     
-    LogMessage logMsg = {.timestamp = millis(), .level = level, .value = std::nullopt};
+    LogMessage logMsg = {.timestamp = esp_timer_get_time(), .level = level, .value = std::nullopt};
 
     size_t copyLen = std::min<size_t>(tag.length(), sizeof(logMsg.tag));
     memcpy(logMsg.tag, tag.data(), copyLen);
@@ -65,7 +94,7 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
 
     constexpr std::string_view prefix = "Memory Stats: (";
     if (prefix.length() < sizeof(logMsg.msg)) memcpy(logMsg.msg, prefix.data(), prefix.length());
-    else LOG_F(tag, "logMem() Failed(1): Buffer overflow");
+    else LOG_F(this->tag, "logMem() Failed(1): Buffer overflow");
     curPos += prefix.length();
 
     va_list args;
@@ -82,7 +111,7 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
     *curPos = '\0';
     
     BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-    if (flag != pdPASS) LOG_F(tag, "logMem() Failed: Failed to send through queue");
+    if (flag != pdPASS) LOG_F(this->tag, "logMem() Failed: Failed to send through queue");
     curPos = logMsg.msg;
 
     bool printBlockSize = ((flags & MemFlag::BLOCK) != 0);
@@ -96,7 +125,7 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
         }
 
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-        if (flag != pdPASS) LOG_F(tag, "logMem() Failed: Failed to send through queue");
+        if (flag != pdPASS) LOG_F(this->tag, "logMem() Failed: Failed to send through queue: %s", tag.data());
         curPos = logMsg.msg;
     }
 
@@ -111,7 +140,7 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
         }
 
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
-        if (flag != pdPASS) LOG_F(tag, "logMem() Failed: Failed to send through queue");
+        if (flag != pdPASS) LOG_F(this->tag, "logMem() Failed: Failed to send through queue: %s", tag.data());
         curPos = logMsg.msg;
     }
 
@@ -159,7 +188,7 @@ Logger::Logger() {
 
 bool Logger::shouldLog(std::string_view tag, LogLevel level) {
     auto it = tagLevels.find(tag);
-    if (it == tagLevels.end()) LOG_F(tag, "Tag \"%.*s\" doesn't exist", (int)tag.length(), tag.data());
+    if (it == tagLevels.end()) LOG_F(this->tag, "Tag \"%.*s\" doesn't exist", (int)tag.length(), tag.data());
     if (level <= it->second) return true;
     else return false;
 }
@@ -172,8 +201,9 @@ void Logger::logTask() {
             Serial.write(ANSI_RED "9999999999[LOG][E][LOGGER_TASK]: logTask() Error: Error recieving from queue\n" ANSI_RESET);
             continue;
         }
-        Timer _t("printLogMsg", LogLevel::VERBOSE);
+        // Timer _t("printLogMsg", LogLevel::VERBOSE);
         printLogMessage(&logMsg);
+        if (logMsg.level == LogLevel::FATAL) ESP.restart();
     }
 }
 
@@ -203,8 +233,8 @@ bool Logger::printLogMessage(LogMessage *logMsg) {
     // _t.recordCheckpoint("Color Codes");
 
     char buffer[40 + sizeof(logMsg->tag) + sizeof(logMsg->msg) + 10]; //10 is extra padding
-    int written = snprintf(buffer, sizeof(buffer), "%s%10u[LOG][%c][%s]: %s\n" ANSI_RESET, 
-                                                    colorCode, logMsg->timestamp, toChar(logMsg->level), logMsg->tag, logMsg->msg);
+    int written = snprintf(buffer, sizeof(buffer), "%s%10" PRId64 "[LOG][%c][%s]: %s\n" ANSI_RESET, 
+                                                    colorCode, logMsg->timestamp/1000, toChar(logMsg->level), logMsg->tag, logMsg->msg);
 
     // _t.recordCheckpoint("snprintf()");
 
