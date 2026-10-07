@@ -26,6 +26,7 @@ Timer::~Timer() {
 
 void Timer::init() {
     if (!initDone) {
+        Logger::init();
         Logger::instance().addTag(tag, initialLogLevel);
         initDone = true;
     }

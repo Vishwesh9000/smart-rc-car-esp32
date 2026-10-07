@@ -10,7 +10,7 @@ class DRV8833_DCMotor {
     const std::string_view tag;
 
     DRV8833_DCMotor(int f, int b, std::string_view motorID = {}, LogLevel level = LogLevel::INFO);
-    void begin();
+    void init();
     void setDirection(int dir);
     void setSpeed(int speed);
     void setVelocity(int velocity);

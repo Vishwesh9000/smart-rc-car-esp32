@@ -77,28 +77,31 @@ class Logger {
     LogLevel defaultLogLevel = LogLevel::VERBOSE;
     static constexpr LogLevel logCompileLevel = static_cast<LogLevel>(LOG_COMPILE_LEVEL);
 
-    static constexpr size_t logBufferSize=96, tagSize=16;
+    static constexpr size_t logBufferSize=120, tagSize=16;
     static constexpr UBaseType_t maxQueueMessages = 10, priority = 5;
     static constexpr size_t stackSize = 4096;
 
     struct LogMessage {
-        uint32_t timestamp;
+        int64_t timestamp; // In microseconds
+        LogLevel level;
         char tag[tagSize];
         char msg[logBufferSize];
-        LogLevel level;
         std::optional<double> value;
+        void assignTagAndMessage(const char* tag, const char* msg);
     };
     
     public:
+    static void init();
     static Logger& instance();
     void addTag(std::string_view tag, LogLevel level);
     void setLevel(LogLevel level, std::string_view tag);
     void log(std::string_view tag, LogLevel level, const char* msg, ...);
-    void logFromISR(LogMessage message);
+    void logFromISR(LogLevel level, LogMessage& logMsg, BaseType_t& higherPriorityTaskWoken);
     void logMem(std::string_view tag, LogLevel level, MemFlag flags, const char* msg, ...);
     constexpr char toChar(LogLevel level);
 
     private:
+    static Logger* _instance;
     TaskHandle_t task;
     QueueHandle_t queue;
 
@@ -114,9 +117,10 @@ class Logger {
     bool shouldLog(std::string_view tag, LogLevel level);
     void logTask();
     static void taskFunction(void *logObj);
-    template<LogLevel level>
+    template<LogLevel errorLevel, LogLevel overflowLevel>
     void snprintfErrorLogger(int written, size_t bufferSize, const char *failedError, const char *overflowError);
     bool printLogMessage(LogMessage *logMsg);
+    void handleFatalError();
 };
 
 #define LOG_AT(tag, level, msg, ...)                                \
@@ -147,20 +151,20 @@ class Logger {
 #define LOG_MEM_D(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::DEBUG, flags, msg, ##__VA_ARGS__)
 #define LOG_MEM_V(tag, flags, msg, ...) LOG_MEM_AT(tag, LogLevel::VERBOSE, flags, msg, ##__VA_ARGS__)
 
-#define LOG_ISR_AT(level, logMsg)                                               \
+#define LOG_ISR_AT(level, logMsg, higherPriorityTaskWoken)                                               \
     do {                                                                        \
         if constexpr (level <= Logger::logCompileLevel) {                       \
-            Logger::instance().logFromISR(level, logMsg);                       \
+            Logger::instance().logFromISR(level, logMsg, higherPriorityTaskWoken);                       \
         }                                                                       \
     } while (0)
 
 
-#define LOG_ISR_F(logMsg) LOG_ISR_AT(LogLevel::FATAL, logMsg)
-#define LOG_ISR_E(logMsg) LOG_ISR_AT(LogLevel::ERROR, logMsg)
-#define LOG_ISR_W(logMsg) LOG_ISR_AT(LogLevel::WARNING, logMsg)
-#define LOG_ISR_I(logMsg) LOG_ISR_AT(LogLevel::INFO, logMsg)
-#define LOG_ISR_D(logMsg) LOG_ISR_AT(LogLevel::DEBUG, logMsg)
-#define LOG_ISR_V(logMsg) LOG_ISR_AT(LogLevel::VERBOSE, logMsg)
+#define LOG_ISR_F(logMsg, higherPriorityTaskWoken) LOG_ISR_AT(LogLevel::FATAL, logMsg, higherPriorityTaskWoken)
+#define LOG_ISR_E(logMsg, higherPriorityTaskWoken) LOG_ISR_AT(LogLevel::ERROR, logMsg, higherPriorityTaskWoken)
+#define LOG_ISR_W(logMsg, higherPriorityTaskWoken) LOG_ISR_AT(LogLevel::WARNING, logMsg, higherPriorityTaskWoken)
+#define LOG_ISR_I(logMsg, higherPriorityTaskWoken) LOG_ISR_AT(LogLevel::INFO, logMsg, higherPriorityTaskWoken)
+#define LOG_ISR_D(logMsg, higherPriorityTaskWoken) LOG_ISR_AT(LogLevel::DEBUG, logMsg, higherPriorityTaskWoken)
+#define LOG_ISR_V(logMsg, higherPriorityTaskWoken) LOG_ISR_AT(LogLevel::VERBOSE, logMsg, higherPriorityTaskWoken)
 
 // TODO: Reduce repetetiveness of reg, mem, and ISR macros
 // #define LOG_COMPILE_TIME_CHECK(level, loggerFunc)                               \
