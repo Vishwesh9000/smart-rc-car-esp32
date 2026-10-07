@@ -22,19 +22,15 @@ bool MT6701::init() {
     return true;
 }
 
-bool MT6701::getPwmAngle(float& angle) {
+float MT6701::getPwmAngle() {
     portENTER_CRITICAL(&capMux);
-    uint32_t pulseWidth = capPulseWidth;
-    uint32_t period = capPeriod;
-    bool newDataAvailable = newCapAvailable;
-    newCapAvailable = false;
+    uint32_t pulseWidth = recentCaps[latestCapIndex].pulseWidth;
+    uint32_t period = recentCaps[latestCapIndex].period;
+    bool newDataAvailable = recentCaps[latestCapIndex].unread;
+    recentCaps[latestCapIndex].unread = false;
     portEXIT_CRITICAL(&capMux);
     
-    angle = pwmToAngle(static_cast<float>(pulseWidth), static_cast<float>(period));
-    if (newDataAvailable) {
-        return true;
-    }
-    return false;
+    return pwmToAngle(static_cast<float>(pulseWidth), static_cast<float>(period));
 }
 
 bool MT6701::getI2CAngle(float& angle) {
@@ -54,6 +50,85 @@ bool MT6701::getI2CAngle(float& angle) {
     angle = a*360.0f/16384.0f;
     return true;
 }
+
+float MT6701::getVelocity() {
+    capStruct latestCap, previousCap;
+    portENTER_CRITICAL(&capMux);
+    latestCap = recentCaps[latestCapIndex];
+    previousCap = recentCaps[(latestCapIndex - 1 + capsToKeep) % capsToKeep];
+    portEXIT_CRITICAL(&capMux);
+    
+    float angleDelta = ( pwmToAngle(static_cast<float>(latestCap.pulseWidth),   static_cast<float>(latestCap.period)) 
+              -  pwmToAngle(static_cast<float>(previousCap.pulseWidth), static_cast<float>(previousCap.period)) );
+    if (angleDelta > 180.0f) {
+        angleDelta -= 360.0f;
+    } else if (angleDelta < -180.0f) {
+        angleDelta += 360.0f;
+    }
+
+    return angleDelta
+            / (static_cast<float>(latestCap.ticks - previousCap.ticks))
+            * capTimerRes;
+}
+
+float MT6701::getSpacedVelocity() {
+    capStruct latestCap, previousCap;
+    portENTER_CRITICAL(&capMux);
+    latestCap = recentCaps[latestCapIndex];
+    previousCap = recentCaps[(latestCapIndex + 1) % capsToKeep];
+    portEXIT_CRITICAL(&capMux);
+    
+    float velocity = ( pwmToAngle(static_cast<float>(latestCap.pulseWidth),   static_cast<float>(latestCap.period)) 
+              -  pwmToAngle(static_cast<float>(previousCap.pulseWidth), static_cast<float>(previousCap.period)) );
+    if (velocity > 180.0f) {
+        velocity -= 360.0f;
+    } else if (velocity < -180.0f) {
+        velocity += 360.0f;
+    }
+    velocity = velocity / ( static_cast<float>(latestCap.ticks - previousCap.ticks) )
+                * capTimerRes;
+    return velocity;
+}
+
+float MT6701::getRawVelocity() {
+    float velocity;
+    portENTER_CRITICAL(&capMux);
+    velocity = capRawVelocity;
+    portEXIT_CRITICAL(&capMux);
+    return velocity / 1'000;
+}
+
+float MT6701::getSmoothVelocity() {
+    float velocity;
+    portENTER_CRITICAL(&capMux);
+    velocity = capSmoothVelocity;
+    portEXIT_CRITICAL(&capMux);
+    return velocity / 1'000;
+}
+
+MT6701::capStruct::capStruct(const volatile capStruct &other): 
+        ticks(other.ticks), pulseWidth(other.pulseWidth), period(other.period),
+        angle_pwmTicks(other.angle_pwmTicks), unread(other.unread) {
+}
+
+MT6701::capStruct& MT6701::capStruct::operator=(const volatile capStruct &other) {
+    ticks = other.ticks;
+    pulseWidth = other.pulseWidth;
+    period = other.period;
+    angle_pwmTicks = other.angle_pwmTicks;
+    unread = other.unread;
+    return *this;
+}
+
+volatile MT6701::capStruct& MT6701::capStruct::operator=(const capStruct &other) volatile {
+    ticks = other.ticks;
+    pulseWidth = other.pulseWidth;
+    period = other.period;
+    angle_pwmTicks = other.angle_pwmTicks;
+    unread = other.unread;
+    return *this;
+}
+
 bool IRAM_ATTR MT6701::onPosEdgeStatic(mcpwm_cap_channel_handle_t capChan, const mcpwm_capture_event_data_t *edata, void *arg) {
         return static_cast<MT6701*>(arg)->onPosEdge(capChan, edata);
 }
@@ -64,37 +139,76 @@ bool IRAM_ATTR MT6701::onNegEdgeStatic(mcpwm_cap_channel_handle_t capChan, const
 
 bool IRAM_ATTR MT6701::onPosEdge(mcpwm_cap_channel_handle_t capChan, const mcpwm_capture_event_data_t *edata) {
     BaseType_t higherPriorityTaskWoken = pdFALSE;
+    constexpr int indexOffset = capsToKeep-1;
     portENTER_CRITICAL_ISR(&capMux);
-    const uint32_t capCurPosEdge = edata->cap_value, capCurPeriod = capCurPosEdge-capPosEdge;
-    if (capCurPeriod > capMaxPeriod
-            || capCurPeriod < capMinPeriod) {
+    const int expectingPosEdge = waitingForPosEdge;
+    int available = capsAvailable;
+    const uint32_t lastPosEdge = capPosEdge;
+    const uint32_t lastNegEdge = capNegEdge;
+    int32_t rawVelocity = capRawVelocity;
+    int32_t smoothVelocity = capSmoothVelocity;
+    const int lastCapIndex = latestCapIndex;
+    const int newCapIndex = (lastCapIndex + 1) % capsToKeep;
+    const int capIndexForVelocityCalc = (newCapIndex - indexOffset + capsToKeep) % capsToKeep;
+    const capStruct lastCap = recentCaps[lastCapIndex];
+    const capStruct capForVelocityCalc = recentCaps[capIndexForVelocityCalc];
+    portEXIT_CRITICAL_ISR(&capMux);
+
+    const uint32_t curPosEdge = edata->cap_value;
+    const uint32_t period = curPosEdge-lastPosEdge;
+
+    bool validCap = true;
+    if (lastPosEdge == 0) {
+        // First positive edge
+        validCap = false;
+    }
+    else if (period > capMaxPeriod
+            || period < capMinPeriod) {
         //Error: period out of bounds
-        portEXIT_CRITICAL_ISR(&capMux);
         logMsg.assignTagAndMessage(nullptr, "Invalid PWM: Period out of Bounds");
         LOG_ISR_E(logMsg, higherPriorityTaskWoken);
-        portENTER_CRITICAL_ISR(&capMux);
+        validCap = false;
     } 
-    else if (capPosEdge > capNegEdge) {
+    else if (expectingPosEdge != 1) {
         //ERROR: double positive edges
-        portEXIT_CRITICAL_ISR(&capMux);
         logMsg.assignTagAndMessage(nullptr, "Invalid PWM: Double positive edge");
         LOG_ISR_E(logMsg, higherPriorityTaskWoken);
-        portENTER_CRITICAL_ISR(&capMux);
-    } 
-    else {
-        capPulseWidth = capNegEdge-capPosEdge;
-        capPeriod = capCurPosEdge-capPosEdge;
-        newCapAvailable = true;
+        validCap = false;
     }
-    capPosEdge = capCurPosEdge;
 
+    capStruct newCap;
+
+    if (validCap) {
+        newCap.ticks = curPosEdge;
+        newCap.pulseWidth = lastNegEdge - lastPosEdge;
+        newCap.period = period;
+        newCap.angle_pwmTicks = pwmToAngleWidth(newCap.pulseWidth, newCap.period);
+        newCap.unread = true;
+        if (available < capsToKeep) available++;
+        if (available >= capsToKeep) {
+            rawVelocity = capStructToVelocity(capForVelocityCalc, newCap);
+            smoothVelocity = EMAFilter(rawVelocity, smoothVelocity);   
+        }
+    }
+    portENTER_CRITICAL_ISR(&capMux);
+    if (validCap) {
+        capsAvailable = available;
+        recentCaps[newCapIndex] = newCap;
+        latestCapIndex = newCapIndex;
+        capRawVelocity = rawVelocity;
+        capSmoothVelocity = smoothVelocity;
+    }
+    capPosEdge = curPosEdge;
+    waitingForPosEdge = 0;
     portEXIT_CRITICAL_ISR(&capMux);
+
     return (higherPriorityTaskWoken == pdTRUE);
 }
 
 bool IRAM_ATTR MT6701::onNegEdge(mcpwm_cap_channel_handle_t capChan, const mcpwm_capture_event_data_t *edata) {
     portENTER_CRITICAL_ISR(&capMux);
     capNegEdge = edata->cap_value;
+    waitingForPosEdge = 1;
     portEXIT_CRITICAL_ISR(&capMux);
     return false;
 }
@@ -209,15 +323,32 @@ void MT6701::initPWM() {
     LOG_I(tag, "   MCPWM capture running, timer resolution %" PRIu32 " Hz\n", capTimerRes);
 }
 
-float MT6701::pwmToAngle(float pulseWidth, float period) {
-    return constrain(static_cast<float>(pulseWidth) / static_cast<float>(period)
+constexpr float MT6701::pwmToAngle(float pulseWidth, float period) {
+    return constrain(pulseWidth / period
             * PWM_FRAME_LENGTH - PWM_HEADER_LENGTH, 0.0f, 4095.0f)
             *360.0f/4095.0f;
 }
 
+constexpr uint32_t MT6701::pwmToAngleWidth(uint32_t pulseWidth, uint32_t period) {
+    return constrain(pulseWidth*PWM_FRAME_LENGTH/period, PWM_HEADER_LENGTH, 4095 + PWM_HEADER_LENGTH) - PWM_HEADER_LENGTH;
+}
 
+constexpr int32_t MT6701::capStructToVelocity(const capStruct &prev, const capStruct &cur) {
+    int64_t angleDiff = static_cast<int64_t>(cur.angle_pwmTicks)
+                    - static_cast<int64_t>(prev.angle_pwmTicks);
+    
+    if (angleDiff > 2048) angleDiff -= 4096;
+    else if (angleDiff < -2048) angleDiff += 4096;
 
+    return static_cast<int32_t>(angleDiff * capTimerRes * 360 * 1'000 / 4096 
+            / static_cast<int64_t>(cur.ticks - prev.ticks));
+}
 
+//TODO: Check overflow
+constexpr int32_t MT6701::EMAFilter(int32_t raw, int32_t smooth) {
+    constexpr int32_t alphaPercent = 10; // EMA smoothing factor
+    return (raw * alphaPercent + smooth * (100 - alphaPercent)) / 100;
+}
 
 
 

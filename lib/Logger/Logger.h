@@ -77,11 +77,10 @@ class Logger {
     LogLevel defaultLogLevel = LogLevel::VERBOSE;
     static constexpr LogLevel logCompileLevel = static_cast<LogLevel>(LOG_COMPILE_LEVEL);
 
-    static constexpr size_t logBufferSize=96, tagSize=16;
+    static constexpr size_t logBufferSize=120, tagSize=16;
     static constexpr UBaseType_t maxQueueMessages = 10, priority = 5;
     static constexpr size_t stackSize = 4096;
 
-    //TODO: Add optional value support
     struct LogMessage {
         int64_t timestamp; // In microseconds
         LogLevel level;
@@ -118,9 +117,10 @@ class Logger {
     bool shouldLog(std::string_view tag, LogLevel level);
     void logTask();
     static void taskFunction(void *logObj);
-    template<LogLevel level>
+    template<LogLevel errorLevel, LogLevel overflowLevel>
     void snprintfErrorLogger(int written, size_t bufferSize, const char *failedError, const char *overflowError);
     bool printLogMessage(LogMessage *logMsg);
+    void handleFatalError();
 };
 
 #define LOG_AT(tag, level, msg, ...)                                \

@@ -19,8 +19,13 @@ class MT6701 {
     const std::string_view tag;
     MT6701(MT6701_Config config, std::string_view tag = "");
     bool init();
-    bool getPwmAngle(float& angle);
+    float getPwmAngle();
     bool getI2CAngle(float& angle);
+    float getVelocity();
+    float getSpacedVelocity();
+    float getRawVelocity();
+    float getSmoothVelocity();
+    float getAcceleration();
 
     private:
     static constexpr uint8_t MT6701_ADDR = 0x06;      // 7-bit I2C address
@@ -34,8 +39,9 @@ class MT6701 {
     static constexpr uint8_t PWM_POL_BIT = 6;         // 0 = active high, 1 = inverted
     static constexpr uint8_t PWM_FREQ_BIT = 7;        // 0 = 994.4 Hz, 1 = 497.2 Hz
 
-    static constexpr float PWM_FRAME_LENGTH = 4119.0f;
-    static constexpr float PWM_HEADER_LENGTH = 16.0f;
+    //Frame Composition: 16 tick header (HIGH) - 4095 data period - 8 tick end signal (LOW)
+    static constexpr uint32_t PWM_FRAME_LENGTH = 4119;
+    static constexpr uint32_t PWM_HEADER_LENGTH = 16;
 
     static inline bool wireUsed = false, wire1Used=false;
     TwoWire *_wire;
@@ -43,18 +49,36 @@ class MT6701 {
     mcpwm_cap_timer_handle_t capTimer = nullptr;
     mcpwm_cap_channel_handle_t capChangePos = nullptr, capChangeNeg = nullptr;
     portMUX_TYPE capMux = portMUX_INITIALIZER_UNLOCKED;
-    constexpr static uint32_t capPWMfreq = 994.4,
-            capPeriodMaxErrPercent = 10;
+    constexpr static float capPWMfreq = 994.4f;
+    constexpr static uint32_t capPeriodMaxErrPercent = 10;
+    constexpr static uint32_t capsToKeep = 4; // Power of 2
     uint32_t capTimerRes = 0,
             capExpPeriod = 0,
             capMinPeriod = 0,
             capMaxPeriod = 0;
+    
+    //TODO: remove default initialization of capStruct members for speed
+    struct capStruct {
+        uint32_t ticks = 0; // Start time of pulse in ESP timer res
+        uint32_t pulseWidth = 0; // Width of high pulse in ESP timer res
+        uint32_t period = 0; // Total length of pulse in ESP timer res
+        uint32_t angle_pwmTicks = 0; // Length of pulse that corresponds to an angle in MT6701 ticks (0-4095)
+        bool unread = true;
+        capStruct() = default;
+        capStruct(const volatile capStruct &other);
+        capStruct& operator=(const capStruct &other) = default;
+        capStruct& operator=(const volatile capStruct &other);
+        volatile capStruct& operator=(const capStruct &other) volatile;
+    };
+    volatile capStruct recentCaps[capsToKeep];
+    volatile int latestCapIndex = 0;
+    volatile int waitingForPosEdge = -1; //-1 = uinitialized, 0 = false, 1 = true
+    volatile int capsAvailable = 0;
+    volatile uint32_t capPosEdge = 0;
+    volatile uint32_t capNegEdge = 0;
+    volatile int32_t capRawVelocity = 0; //TODO: checkBounds
+    volatile int32_t capSmoothVelocity = 0;
 
-    volatile uint32_t capPosEdge = 0,
-            capNegEdge = 0,
-            capPulseWidth = 0,
-            capPeriod = 1;
-    volatile bool newCapAvailable = false;
 
     Logger::LogMessage logMsg; 
     
@@ -65,5 +89,8 @@ class MT6701 {
     bool onNegEdge(mcpwm_cap_channel_handle_t capChan, const mcpwm_capture_event_data_t *edata);
     void initI2C();
     void initPWM();
-    float pwmToAngle(float pulseWidth, float period);
+    constexpr float pwmToAngle(float pulseWidth, float period);
+    constexpr uint32_t pwmToAngleWidth(uint32_t pulseWidth, uint32_t period);
+    constexpr int32_t capStructToVelocity(const capStruct &prev, const capStruct &cur);
+    constexpr int32_t EMAFilter(int32_t raw, int32_t smooth);
 };

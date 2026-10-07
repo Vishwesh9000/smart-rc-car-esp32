@@ -3,9 +3,9 @@
 #include "Logger.h"
 #include <inttypes.h>
 
-//TODO Don't crash on logging buffer overflows
+//TODO: Add tracking of dropped log messages
 
-void Logger::LogMessage::assignTagAndMessage(const char* tag, const char* msg) {
+void IRAM_ATTR Logger::LogMessage::assignTagAndMessage(const char* tag, const char* msg) {
     size_t copyLen;
     if (tag != nullptr) {
         copyLen = strnlen(tag, sizeof(this->tag)-1);
@@ -55,25 +55,26 @@ void Logger::log(std::string_view tag, LogLevel level, const char* msg, ...) {
     va_start(args, msg);
     int written = vsnprintf(logMsg.msg, sizeof(logMsg.msg), msg, args);
     va_end(args);
-    snprintfErrorLogger<LogLevel::FATAL>(written, sizeof(logMsg.msg), "vsnprintf() Failed", "vsnprintf() Failed: Buffer overflowed");
+    snprintfErrorLogger<LogLevel::FATAL, LogLevel::ERROR>(written, sizeof(logMsg.msg), "vsnprintf() Failed", "Log buffer overflowed");
 
     size_t copyLen = std::min<size_t>(tag.length(), sizeof(logMsg.tag));
     memcpy(logMsg.tag, tag.data(), copyLen);
     logMsg.tag[copyLen] = '\0';
 
-    //TODO: Add feature to flush logs before terminating
     if (xTaskGetCurrentTaskHandle() != task) {
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
         if (flag != pdPASS) LOG_F(this->tag, "Sending log message through queue failed");
-        if (level == LogLevel::FATAL) vTaskDelay(pdMS_TO_TICKS(10'000));
+        if (level == LogLevel::FATAL) {
+            handleFatalError();
+        }
     }
     else {
         printLogMessage(&logMsg);
-        if (level == LogLevel::FATAL) ESP.restart(); 
+        if (level == LogLevel::FATAL) abort(); 
     }
 }
 
-void Logger::logFromISR(LogLevel level, LogMessage &logMsg, BaseType_t &higherPriorityTaskWoken) {
+void IRAM_ATTR Logger::logFromISR(LogLevel level, LogMessage &logMsg, BaseType_t &higherPriorityTaskWoken) {
     logMsg.timestamp = esp_timer_get_time();
     logMsg.level = level;
     logMsg.tag[sizeof(logMsg.tag)-1] = '\0';
@@ -86,30 +87,42 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
     
     LogMessage logMsg = {.timestamp = esp_timer_get_time(), .level = level, .value = std::nullopt};
 
-    size_t copyLen = std::min<size_t>(tag.length(), sizeof(logMsg.tag));
+    size_t copyLen = std::min<size_t>(tag.length(), sizeof(logMsg.tag)-1);
     memcpy(logMsg.tag, tag.data(), copyLen);
     logMsg.tag[copyLen] = '\0';
 
-    char *curPos = logMsg.msg, *endPos = &logMsg.msg[sizeof(logMsg.msg)];
-
-    constexpr std::string_view prefix = "Memory Stats: (";
-    if (prefix.length() < sizeof(logMsg.msg)) memcpy(logMsg.msg, prefix.data(), prefix.length());
-    else LOG_F(this->tag, "logMem() Failed(1): Buffer overflow");
+    char *curPos = logMsg.msg;
+    const char *endPos = logMsg.msg + sizeof(logMsg.msg);
+    constexpr std::string_view prefix = "Memory Stats (";
+    if constexpr (prefix.length() < sizeof(logMsg.msg)) memcpy(logMsg.msg, prefix.data(), prefix.length());
+    else {
+        LOG_E(this->tag, "Log buffer overflowed");
+        logMsg.msg[sizeof(logMsg.msg) - 1] = '\0';
+    }
     curPos += prefix.length();
 
-    va_list args;
-    va_start(args, msg);
-    int written = vsnprintf(curPos, endPos-curPos, msg, args);
-    va_end(args);
-    snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(2): vsnprintf() Error", "logMem() Failed(2): Buffer Overflow");
-    curPos += written;
-
-    if (endPos-curPos < 4) LOG_F(tag, "logMem() Failed(3): Buffer Overflowed");
-    *(curPos++) = ')';
-    *(curPos++) = ':';
-    *(curPos++) = '\n';
-    *curPos = '\0';
+    int written;
+    if (curPos < endPos) {
+        va_list args;
+        va_start(args, msg);
+        written = vsnprintf(curPos, endPos-curPos, msg, args);
+        va_end(args);
+        
+        snprintfErrorLogger<LogLevel::FATAL, LogLevel::ERROR>(written, endPos-curPos, "vsnprintf() Failed", "Log buffer overflowed");
+        curPos += written;
+    }
+    if (curPos >= endPos) {}
+    else if (endPos-curPos < 4) LOG_E(this->tag, "Buffer Overflowed");
+    else {
+        *(curPos++) = ')';
+        *(curPos++) = ':';
+        *(curPos++) = '\n';
+        *curPos = '\0';
+    }
     
+    logMsg.msg[sizeof(logMsg.msg)-2] = '\n';
+    logMsg.msg[sizeof(logMsg.msg)-1] = '\0';
+
     BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
     if (flag != pdPASS) LOG_F(this->tag, "logMem() Failed: Failed to send through queue");
     curPos = logMsg.msg;
@@ -117,11 +130,11 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
     bool printBlockSize = ((flags & MemFlag::BLOCK) != 0);
     if ((flags & MemFlag::INTERNAL) != 0) {
         written = snprintf(curPos, endPos-curPos, "\tINTERNAL RAM: %lu", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-        snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(4): snprintf() Error", "logMem() Failed(4): Buffer Overflowed");
+        snprintfErrorLogger<LogLevel::FATAL, LogLevel::ERROR>(written, endPos-curPos, "snprintf() Failed", "Log buffer overflowed");
         curPos += written;
-        if (printBlockSize) {
+        if (printBlockSize && curPos < endPos) {
             written = snprintf(curPos, endPos-curPos, " (Block: %lu)", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-            snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(5): snprintf() Error", "logMem() Failed(5): Buffer Overflowed");
+            snprintfErrorLogger<LogLevel::FATAL, LogLevel::ERROR>(written, endPos-curPos, "snprintf() Failed", "Log buffer overflowed");
         }
 
         BaseType_t flag = xQueueSend(queue, &logMsg, portMAX_DELAY);
@@ -131,11 +144,11 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
 
     if ((flags & MemFlag::SPI_RAM) != 0) {
         written = snprintf(curPos, endPos-curPos, "\tSPI RAM: %lu", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-        snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(7): snprintf() Error", "logMem() Failed(7): Buffer Overflowed");
+        snprintfErrorLogger<LogLevel::FATAL, LogLevel::ERROR>(written, endPos-curPos, "snprintf() Failed", "Log buffer overflowed");
         curPos += written;
-        if (printBlockSize) {
+        if (printBlockSize && curPos < endPos) {
             written = snprintf(curPos, endPos-curPos, " (Block: %lu)", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
-            snprintfErrorLogger<LogLevel::FATAL>(written, endPos-curPos, "logMem() Failed(8): snprintf() Error", "logMem() Failed(8): Buffer Overflowed");
+            snprintfErrorLogger<LogLevel::FATAL, LogLevel::ERROR>(written, endPos-curPos, "snprintf() Failed", "Log buffer overflowed");
             curPos += written;
         }
 
@@ -145,7 +158,7 @@ void Logger::logMem(const std::string_view tag, LogLevel level, MemFlag flags, c
     }
 
 
-    if (level == LogLevel::FATAL) vTaskDelay(pdMS_TO_TICKS(10'000));
+    if (level == LogLevel::FATAL) handleFatalError();
 }
 
 constexpr char Logger::toChar(const LogLevel level) {
@@ -203,7 +216,10 @@ void Logger::logTask() {
         }
         // Timer _t("printLogMsg", LogLevel::VERBOSE);
         printLogMessage(&logMsg);
-        if (logMsg.level == LogLevel::FATAL) ESP.restart();
+        if (logMsg.level == LogLevel::FATAL) {
+            Serial.write(ANSI_MAGENTA "9999999999[LOG][F][LOGGER_TASK]: FATAL Errors shouldn't propogate to logTask()\n" ANSI_RESET);
+            abort();
+        }
     }
 }
 
@@ -212,7 +228,7 @@ void Logger::taskFunction(void *logObj) {
 }
 
 bool Logger::printLogMessage(LogMessage *logMsg) {
-    // Add std::optional value support
+    //TODO: Add std::optional value support
 
     // if (logMsg.level == LogLevel::FATAL) Serial.print(ANSI_MAGENTA);
     // if (logMsg.level == LogLevel::ERROR) Serial.print(ANSI_RED);
@@ -250,4 +266,23 @@ bool Logger::printLogMessage(LogMessage *logMsg) {
     // _t.recordCheckpoint("End");
     return true;
 }
+
+void Logger::handleFatalError() {
+    portDISABLE_INTERRUPTS();
+    LogMessage logMsg;
+    BaseType_t higherPriorityTaskWoken;
+    while (xQueueReceiveFromISR(queue, &logMsg, &higherPriorityTaskWoken) == pdPASS) {
+        printLogMessage(&logMsg);
+        if (logMsg.level == LogLevel::FATAL) {
+            abort();
+        }
+    }
+    Serial.write(ANSI_MAGENTA "9999999999[LOG][E][LOGGER_TASK]: Flushing logs before terminating failed" ANSI_RESET);
+    abort();
+}
+
+
+
+
+
 
