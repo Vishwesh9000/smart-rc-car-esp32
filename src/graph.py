@@ -5,7 +5,7 @@ import re, serial, matplotlib.pyplot as plt
 # Pattern updated with -? to catch optional negative signs
 # prefix = re.compile(r"\s*\d+\[[\w_ ]+\]\[[\w_ ]+\]\[[\w_ ]+\]: (.*)")
 prefix = re.compile(r"\s*\d+\[[\w_ ]+\]\[[\w_ ]+\]\[MT6701_1\]: (.*)")
-pattern = re.compile(r"([A-Za-z0-9 ]+):\s*(-?[\d.]+)")
+pattern = re.compile(r"([A-Za-z0-9_ ]+):\s*(-?[\d.]+)")
 
 ser = serial.Serial("COM13", 115200, timeout=1)
 
@@ -38,6 +38,6 @@ while True:
         ax.plot(vals, label=key)
 
     ax.legend(loc="upper left")
-    plt.ylim(-360,360)
+    plt.ylim(-500,500)
     plt.pause(0.000001)
     ser.reset_input_buffer()

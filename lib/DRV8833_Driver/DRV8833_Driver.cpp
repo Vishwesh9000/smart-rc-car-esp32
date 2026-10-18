@@ -27,23 +27,23 @@ void DRV8833_DCMotor::setSpeed(int speed) {
     targetPower = speed;
     updateMotor();
 }
-void DRV8833_DCMotor::setVelocity(int p) {
-    if (p < -100 || p > 100) {
-        LOG_E(tag, "Invalid velocity");
+void DRV8833_DCMotor::setVelocity(int v) {
+    if (v < -100 || v > 100) {
+        LOG_E(tag, "Invalid velocity: %d", v);
         return;
     }
-    else if (p > 0) {
-        targetPower = p;
+    else if (v > 0) {
+        targetPower = v;
         direction = 1;
         updateMotor();
 
     }
-    else if (p < 0) {
-        targetPower = -p;
+    else if (v < 0) {
+        targetPower = -v;
         direction = -1;
         updateMotor();
     }
-    else if (p == 0) {
+    else if (v == 0) {
         targetPower = 0;
         direction = 0;
         updateMotor();
