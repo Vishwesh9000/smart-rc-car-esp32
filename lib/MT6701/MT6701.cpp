@@ -1,6 +1,6 @@
 #include "MT6701.h"
-#include "Logger.h"
-#include <cinttypes>
+#include "logger/logger.h"
+#include <inttypes.h>
 
 
 MT6701::MT6701(MT6701_Config cfg, std::string_view tag): config(cfg), tag(tag.empty() ? "MT6701" : tag) {

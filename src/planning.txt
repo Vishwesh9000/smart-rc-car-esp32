@@ -1,0 +1,16 @@
+Current things to do:
+
+
+
+
+Tasks:
+Logging: low
+MT6701: interrupt
+IMU: SPI (high)
+    interrupt for timing
+Wifi: 
+    Drive motors
+    (separate task for control?)
+
+
+Prioritze sensor or control?

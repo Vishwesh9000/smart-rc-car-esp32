@@ -1,5 +1,5 @@
 #include "Arduino.h"
-#include "Logger.h"
+#include "logger/log_types.h"
 #include "Wire.h"
 #include "driver/mcpwm_cap.h"
 #include <string_view>
@@ -80,7 +80,7 @@ class MT6701 {
     volatile int32_t capSmoothVelocity = 0;
 
 
-    Logger::LogMessage logMsg; 
+    LogMessage logMsg; 
     
     static bool onPosEdgeStatic(mcpwm_cap_channel_handle_t capChan, const mcpwm_capture_event_data_t *edata, void *arg);
     static bool onNegEdgeStatic(mcpwm_cap_channel_handle_t capChan, const mcpwm_capture_event_data_t *edata, void *arg);

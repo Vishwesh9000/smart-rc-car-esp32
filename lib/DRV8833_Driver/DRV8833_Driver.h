@@ -1,7 +1,7 @@
 #pragma once
 #include <string_view>
 #include "Arduino.h"
-#include "LogLevels.h"
+#include "logger/log_types.h"
 
 class DRV8833_DCMotor {
     public:

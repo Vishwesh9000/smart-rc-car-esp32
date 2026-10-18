@@ -1,5 +1,5 @@
 #include "DRV8833_Driver.h"
-#include "Logger.h"
+#include "logger/logger.h"
 
 DRV8833_DCMotor::DRV8833_DCMotor(int f, int b, std::string_view motorID, LogLevel level):
         F_PIN(f), B_PIN(b), targetPower(0), power(0), direction(0),
